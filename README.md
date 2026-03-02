@@ -82,6 +82,24 @@ Swagger UI:
 6. `GET /wallets/{USER_ID}/balance` => should be `60.00`
 7. `GET /wallets/{USER_ID}/ledger` => should contain both credit and debit entries
 
+## Phase 2: Concurrency Verification
+Scenario:
+- initial balance `100.00`
+- `50` concurrent debit requests of `10.00`
+
+Expected:
+- `10` succeed
+- `40` fail with insufficient balance
+- final balance `0.00`
+- exactly `10` debit ledger entries for `10.00`
+
+Run:
+```powershell
+python -m walletApp.concurrency_check
+```
+
+The script prints `PHASE2_CONCURRENCY_CHECK: PASS` when concurrency consistency is correct.
+
 ## Production Notes
 - Centralized exception handling is enabled for:
   - `HTTPException`

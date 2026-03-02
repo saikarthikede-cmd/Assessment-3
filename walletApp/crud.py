@@ -1,14 +1,68 @@
+import random
+import time
 from decimal import Decimal
+from typing import Callable, TypeVar
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from walletApp.config import DB_TX_MAX_RETRIES, DB_TX_RETRY_BASE_DELAY
 from walletApp.logging_config import get_logger
 from walletApp.models import Ledger, User, Wallet
 
 logger = get_logger(__name__)
+RETRYABLE_SQLSTATES = {"40P01", "40001"}  # deadlock_detected, serialization_failure
+T = TypeVar("T")
+
+
+def _extract_sqlstate(exc: SQLAlchemyError) -> str | None:
+    orig = getattr(exc, "orig", None)
+    if not orig:
+        return None
+    return getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+
+
+def _run_tx_with_retry(db: Session, operation_name: str, operation: Callable[[], T]) -> T:
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return operation()
+        except HTTPException:
+            db.rollback()
+            raise
+        except SQLAlchemyError as exc:
+            db.rollback()
+            sqlstate = _extract_sqlstate(exc)
+            should_retry = (
+                sqlstate in RETRYABLE_SQLSTATES
+                and attempt <= DB_TX_MAX_RETRIES
+            )
+            if should_retry:
+                backoff = DB_TX_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                jitter = random.uniform(0, DB_TX_RETRY_BASE_DELAY) if DB_TX_RETRY_BASE_DELAY > 0 else 0
+                sleep_for = backoff + jitter
+                logger.warning(
+                    "Retrying %s due to transient DB error | attempt=%s/%s sqlstate=%s sleep=%.3fs",
+                    operation_name,
+                    attempt,
+                    DB_TX_MAX_RETRIES,
+                    sqlstate,
+                    sleep_for,
+                )
+                time.sleep(sleep_for)
+                continue
+
+            logger.exception(
+                "Database error in %s | attempt=%s sqlstate=%s",
+                operation_name,
+                attempt,
+                sqlstate,
+            )
+            raise HTTPException(status_code=500, detail="Transaction failed")
 
 
 def create_user(db: Session, email: str):
@@ -66,74 +120,74 @@ def create_wallet(db: Session, user_id: UUID):
 
 
 def credit_wallet(db: Session, user_id: UUID, amount: Decimal):
-    try:
-        wallet = (
-            db.query(Wallet)
-            .filter(Wallet.user_id == user_id)
-            .with_for_update()
-            .first()
-        )
-        if not wallet:
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
+
+    def _operation():
+        update_result = db.execute(
+            update(Wallet)
+            .where(Wallet.user_id == user_id)
+            .values(balance=Wallet.balance + amount)
+            .returning(Wallet.id)
+        ).first()
+        if not update_result:
             raise HTTPException(status_code=404, detail="Wallet not found")
 
-        wallet.balance = wallet.balance + amount
-        entry = Ledger(wallet_id=wallet.id, type="credit", amount=amount)
+        wallet_id = update_result[0]
+        entry = Ledger(wallet_id=wallet_id, type="credit", amount=amount)
         db.add(entry)
 
         db.commit()
+        wallet = db.query(Wallet).filter(Wallet.id == wallet_id).first()
         db.refresh(wallet)
         logger.info(
             "Wallet credited | user_id=%s wallet_id=%s amount=%s new_balance=%s",
             user_id,
-            wallet.id,
+            wallet_id,
             amount,
             wallet.balance,
         )
         return wallet
-    except HTTPException:
-        db.rollback()
-        raise
-    except SQLAlchemyError:
-        db.rollback()
-        logger.exception("Database error in credit_wallet | user_id=%s amount=%s", user_id, amount)
-        raise HTTPException(status_code=500, detail="Transaction failed")
+
+    return _run_tx_with_retry(db, "credit_wallet", _operation)
 
 
 def debit_wallet(db: Session, user_id: UUID, amount: Decimal):
-    try:
-        wallet = (
-            db.query(Wallet)
-            .filter(Wallet.user_id == user_id)
-            .with_for_update()
-            .first()
-        )
-        if not wallet:
-            raise HTTPException(status_code=404, detail="Wallet not found")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Invalid amount")
 
-        if wallet.balance < amount:
+    def _operation():
+        # Single atomic update prevents race conditions across concurrent workers/instances.
+        update_result = db.execute(
+            update(Wallet)
+            .where(Wallet.user_id == user_id, Wallet.balance >= amount)
+            .values(balance=Wallet.balance - amount)
+            .returning(Wallet.id)
+        ).first()
+
+        if not update_result:
+            wallet_exists = db.query(Wallet.id).filter(Wallet.user_id == user_id).first()
+            if not wallet_exists:
+                raise HTTPException(status_code=404, detail="Wallet not found")
             raise HTTPException(status_code=400, detail="Insufficient balance")
 
-        wallet.balance = wallet.balance - amount
-        entry = Ledger(wallet_id=wallet.id, type="debit", amount=amount)
+        wallet_id = update_result[0]
+        entry = Ledger(wallet_id=wallet_id, type="debit", amount=amount)
         db.add(entry)
 
         db.commit()
+        wallet = db.query(Wallet).filter(Wallet.id == wallet_id).first()
         db.refresh(wallet)
         logger.info(
             "Wallet debited | user_id=%s wallet_id=%s amount=%s new_balance=%s",
             user_id,
-            wallet.id,
+            wallet_id,
             amount,
             wallet.balance,
         )
         return wallet
-    except HTTPException:
-        db.rollback()
-        raise
-    except SQLAlchemyError:
-        db.rollback()
-        logger.exception("Database error in debit_wallet | user_id=%s amount=%s", user_id, amount)
-        raise HTTPException(status_code=500, detail="Transaction failed")
+
+    return _run_tx_with_retry(db, "debit_wallet", _operation)
 
 
 def get_balance(db: Session, user_id: UUID):
