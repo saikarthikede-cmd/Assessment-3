@@ -4,6 +4,7 @@ from uuid import UUID
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from walletApp.config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_ALGORITHM, JWT_SECRET_KEY
@@ -13,6 +14,15 @@ from walletApp.models import User
 
 logger = get_logger(__name__)
 auth_scheme = HTTPBearer(auto_error=False)
+password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return password_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return password_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(user_id: UUID, email: str) -> tuple[str, int]:
@@ -70,5 +80,15 @@ def authorize_user_access(path_user_id: UUID, current_user_id: UUID) -> None:
             "Forbidden wallet access attempt | token_user_id=%s target_user_id=%s",
             current_user_id,
             path_user_id,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+def authorize_user_access_by_email(path_email: str, current_user_email: str) -> None:
+    if path_email.strip().lower() != current_user_email.strip().lower():
+        logger.warning(
+            "Forbidden wallet access attempt | token_email=%s target_email=%s",
+            current_user_email,
+            path_email,
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")

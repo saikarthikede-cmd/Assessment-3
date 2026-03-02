@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from walletApp import crud
-from walletApp.database import SessionLocal
+from walletApp.database import SessionLocal, ensure_schema_compatibility
 from walletApp.models import Ledger, User, Wallet
 
 
@@ -22,6 +22,8 @@ def _debit_once(user_id):
 
 
 def run_check(concurrency=50):
+    ensure_schema_compatibility()
+
     setup_db = SessionLocal()
     try:
         email = f"phase2_{uuid4()}@example.com"

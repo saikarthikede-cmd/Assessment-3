@@ -65,13 +65,13 @@ def _run_tx_with_retry(db: Session, operation_name: str, operation: Callable[[],
             raise HTTPException(status_code=500, detail="Transaction failed")
 
 
-def create_user(db: Session, email: str):
+def create_user(db: Session, email: str, hashed_password: str | None = None):
     try:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             raise HTTPException(status_code=400, detail="User already exists")
 
-        user = User(email=email)
+        user = User(email=email, hashed_password=hashed_password)
         db.add(user)
         db.commit()
         db.refresh(user)

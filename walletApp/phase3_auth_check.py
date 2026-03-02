@@ -89,48 +89,47 @@ def run_phase3_check() -> None:
 
         email1 = f"phase3_u1_{uuid4()}@example.com"
         email2 = f"phase3_u2_{uuid4()}@example.com"
+        password1 = "StrongPass!123"
+        password2 = "StrongPass!456"
 
-        status_code, user1 = request("POST", "/users", {"email": email1})
+        status_code, user1 = request("POST", "/auth/register", {"email": email1, "password": password1})
         assert status_code == 200, (status_code, user1)
 
-        status_code, user2 = request("POST", "/users", {"email": email2})
+        status_code, user2 = request("POST", "/auth/register", {"email": email2, "password": password2})
         assert status_code == 200, (status_code, user2)
 
-        user1_id = user1["id"]
-        user2_id = user2["id"]
-
-        status_code, token1_response = request("POST", "/auth/token", {"email": email1, "password": "StrongPass!123"})
+        status_code, token1_response = request("POST", "/auth/signin", {"email": email1, "password": password1})
         assert status_code == 200, (status_code, token1_response)
 
-        status_code, token2_response = request("POST", "/auth/token", {"email": email2, "password": "StrongPass!123"})
+        status_code, token2_response = request("POST", "/auth/signin", {"email": email2, "password": password2})
         assert status_code == 200, (status_code, token2_response)
 
         token1 = token1_response["access_token"]
         token2 = token2_response["access_token"]
 
-        status_code, _ = request("POST", f"/wallets/{user1_id}")
+        status_code, _ = request("POST", f"/wallets/{email1}")
         assert status_code == 401, status_code
 
-        status_code, _ = request("POST", f"/wallets/{user1_id}", token=token1)
+        status_code, _ = request("POST", f"/wallets/{email1}", token=token1)
         assert status_code == 200, status_code
 
-        status_code, _ = request("POST", f"/wallets/{user2_id}", token=token1)
+        status_code, _ = request("POST", f"/wallets/{email2}", token=token1)
         assert status_code == 403, status_code
 
-        status_code, _ = request("POST", f"/wallets/{user1_id}/credit", {"amount": "100.00"}, token1)
+        status_code, _ = request("POST", f"/wallets/{email1}/credit", {"amount": "100.00"}, token1)
         assert status_code == 200, status_code
 
-        status_code, _ = request("POST", f"/wallets/{user1_id}/debit", {"amount": "40.00"}, token1)
+        status_code, _ = request("POST", f"/wallets/{email1}/debit", {"amount": "40.00"}, token1)
         assert status_code == 200, status_code
 
-        status_code, _ = request("GET", f"/wallets/{user1_id}/balance", token=token2)
+        status_code, _ = request("GET", f"/wallets/{email1}/balance", token=token2)
         assert status_code == 403, status_code
 
-        status_code, own_balance = request("GET", f"/wallets/{user1_id}/balance", token=token1)
+        status_code, own_balance = request("GET", f"/wallets/{email1}/balance", token=token1)
         assert status_code == 200, status_code
         assert own_balance["balance"] == "60.00", own_balance
 
-        status_code, own_ledger = request("GET", f"/wallets/{user1_id}/ledger", token=token1)
+        status_code, own_ledger = request("GET", f"/wallets/{email1}/ledger", token=token1)
         assert status_code == 200, status_code
         assert len(own_ledger) >= 2, own_ledger
 
