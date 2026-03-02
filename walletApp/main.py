@@ -49,6 +49,16 @@ def issue_token(payload: schemas.AuthTokenRequest, db: Session = Depends(get_db)
     return schemas.TokenResponse(access_token=token, token_type="bearer", expires_in=expires_in)
 
 
+@app.post("/auth/signin", response_model=schemas.TokenResponse, tags=["Auth"])
+def signin(payload: schemas.AuthTokenRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    token, expires_in = auth.create_access_token(user.id, user.email)
+    return schemas.TokenResponse(access_token=token, token_type="bearer", expires_in=expires_in)
+
+
 @app.post("/wallets/{user_id}", response_model=schemas.WalletResponse)
 def create_wallet(
     user_id: UUID,
