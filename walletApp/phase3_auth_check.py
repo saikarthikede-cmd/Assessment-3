@@ -99,10 +99,10 @@ def run_phase3_check() -> None:
         user1_id = user1["id"]
         user2_id = user2["id"]
 
-        status_code, token1_response = request("POST", "/auth/token", {"email": email1})
+        status_code, token1_response = request("POST", "/auth/token", {"email": email1, "password": "StrongPass!123"})
         assert status_code == 200, (status_code, token1_response)
 
-        status_code, token2_response = request("POST", "/auth/token", {"email": email2})
+        status_code, token2_response = request("POST", "/auth/token", {"email": email2, "password": "StrongPass!123"})
         assert status_code == 200, (status_code, token2_response)
 
         token1 = token1_response["access_token"]
