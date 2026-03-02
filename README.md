@@ -102,6 +102,31 @@ python -m walletApp.concurrency_check
 
 The script prints `PHASE2_CONCURRENCY_CHECK: PASS` when concurrency consistency is correct.
 
+## Phase 3: JWT Auth
+Wallet endpoints require `Authorization: Bearer <token>`.
+
+Issue token for an existing user:
+```powershell
+Invoke-RestMethod -Method POST `
+  -Uri "http://127.0.0.1:8000/auth/token" `
+  -ContentType "application/json" `
+  -Body '{"email":"user@example.com"}'
+```
+
+Use token for wallet APIs:
+```powershell
+$token = "<paste_access_token>"
+$headers = @{ Authorization = "Bearer $token" }
+Invoke-RestMethod -Method GET -Uri "http://127.0.0.1:8000/wallets/<user_id>/balance" -Headers $headers
+```
+
+Cross-user access should be blocked with `403 Forbidden`.
+
+Automated Phase 3 check:
+```powershell
+python -m walletApp.phase3_auth_check
+```
+
 ## Production Notes
 - Centralized exception handling is enabled for:
   - `HTTPException`

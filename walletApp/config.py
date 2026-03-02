@@ -42,3 +42,15 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 SQL_ECHO = _to_bool(os.getenv("SQL_ECHO"), False)
 DB_TX_MAX_RETRIES = max(_to_int(os.getenv("DB_TX_MAX_RETRIES"), 3), 0)
 DB_TX_RETRY_BASE_DELAY = max(_to_float(os.getenv("DB_TX_RETRY_BASE_DELAY"), 0.05), 0.0)
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    if APP_ENV == "production":
+        raise RuntimeError("JWT_SECRET_KEY is required in production")
+    JWT_SECRET_KEY = "dev-change-me"
+
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = max(
+    _to_int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES"), 60),
+    1,
+)
