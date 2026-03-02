@@ -40,9 +40,19 @@ Create PostgreSQL database:
 CREATE DATABASE walletdb;
 ```
 
-Optional: set custom DB URL
+Create `.env` in project root (already ignored by git):
+```env
+APP_ENV=development
+DATABASE_URL=postgresql+psycopg://postgres:<your_password>@localhost:5432/walletdb
+LOG_LEVEL=INFO
+SQL_ECHO=false
+```
+
+You can use `.env.example` as template.
+
+Optional: set custom DB URL from shell
 ```powershell
-$env:DATABASE_URL="postgresql+psycopg://postgres:Karthik@localhost:5432/walletdb"
+$env:DATABASE_URL="postgresql+psycopg://postgres:<your_password>@localhost:5432/walletdb"
 ```
 
 ## Run
@@ -55,6 +65,10 @@ Logging env options:
 $env:LOG_LEVEL="INFO"     # DEBUG, INFO, WARNING, ERROR
 $env:SQL_ECHO="false"     # true to print SQL statements
 ```
+
+Production safety:
+- `APP_ENV=production` requires `DATABASE_URL` to be set.
+- Never commit `.env` (contains secrets). Commit `.env.example` only.
 
 Swagger UI:
 - `http://127.0.0.1:8000/docs`
