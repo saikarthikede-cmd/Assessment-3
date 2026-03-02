@@ -46,6 +46,8 @@ APP_ENV=development
 DATABASE_URL=postgresql+psycopg://postgres:<your_password>@localhost:5432/walletdb
 LOG_LEVEL=INFO
 SQL_ECHO=false
+DB_TX_MAX_RETRIES=3
+DB_TX_RETRY_BASE_DELAY=0.05
 ```
 
 You can use `.env.example` as template.
