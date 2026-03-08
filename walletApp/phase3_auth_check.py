@@ -107,34 +107,31 @@ def run_phase3_check() -> None:
         token1 = token1_response["access_token"]
         token2 = token2_response["access_token"]
 
-        status_code, _ = request("POST", f"/wallets/{email1}")
+        status_code, _ = request("POST", "/wallets")
         assert status_code == 401, status_code
 
-        status_code, _ = request("POST", f"/wallets/{email1}", token=token1)
+        status_code, _ = request("POST", "/wallets", token=token1)
         assert status_code == 200, status_code
 
-        status_code, _ = request("POST", f"/wallets/{email2}", token=token1)
-        assert status_code == 403, status_code
+        status_code, _ = request("GET", "/wallets/balance", token=token2)
+        assert status_code == 404, status_code
 
-        status_code, _ = request("POST", f"/wallets/{email1}/credit", {"amount": "100.00"}, token1)
+        status_code, _ = request("POST", "/wallets/credit", {"amount": "100.00"}, token1)
         assert status_code == 200, status_code
 
-        status_code, _ = request("POST", f"/wallets/{email1}/debit", {"amount": "40.00"}, token1)
+        status_code, _ = request("POST", "/wallets/debit", {"amount": "40.00"}, token1)
         assert status_code == 200, status_code
 
-        status_code, _ = request("GET", f"/wallets/{email1}/balance", token=token2)
-        assert status_code == 403, status_code
-
-        status_code, own_balance = request("GET", f"/wallets/{email1}/balance", token=token1)
+        status_code, own_balance = request("GET", "/wallets/balance", token=token1)
         assert status_code == 200, status_code
         assert own_balance["balance"] == "60.00", own_balance
 
-        status_code, own_ledger = request("GET", f"/wallets/{email1}/ledger", token=token1)
+        status_code, own_ledger = request("GET", "/wallets/ledger", token=token1)
         assert status_code == 200, status_code
         assert len(own_ledger) >= 2, own_ledger
 
         print("PHASE3_AUTH_CHECK: PASS")
-        print("no_token=401 own_access=200 cross_access=403 own_balance=60.00")
+        print("no_token=401 own_access=200 other_user_access_blocked=404 own_balance=60.00")
     finally:
         if process.poll() is None:
             process.terminate()

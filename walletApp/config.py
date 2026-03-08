@@ -54,3 +54,16 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES = max(
     _to_int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES"), 60),
     1,
 )
+
+
+def get_async_database_url() -> str:
+    if DATABASE_URL.startswith("postgresql+asyncpg://"):
+        return DATABASE_URL
+    if DATABASE_URL.startswith("postgresql+psycopg://"):
+        return DATABASE_URL.replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
+    if DATABASE_URL.startswith("postgresql://"):
+        return DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    raise RuntimeError("Unsupported DATABASE_URL for async SQLAlchemy engine")
+
+
+ASYNC_DATABASE_URL = get_async_database_url()

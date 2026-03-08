@@ -1,13 +1,13 @@
+import asyncio
 import random
-import time
 from decimal import Decimal
-from typing import Callable, TypeVar
+from typing import Awaitable, Callable, TypeVar
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from walletApp.config import DB_TX_MAX_RETRIES, DB_TX_RETRY_BASE_DELAY
 from walletApp.logging_config import get_logger
@@ -25,22 +25,19 @@ def _extract_sqlstate(exc: SQLAlchemyError) -> str | None:
     return getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
 
 
-def _run_tx_with_retry(db: Session, operation_name: str, operation: Callable[[], T]) -> T:
+async def _run_tx_with_retry(db: AsyncSession, operation_name: str, operation: Callable[[], Awaitable[T]]) -> T:
     attempt = 0
     while True:
         attempt += 1
         try:
-            return operation()
+            return await operation()
         except HTTPException:
-            db.rollback()
+            await db.rollback()
             raise
         except SQLAlchemyError as exc:
-            db.rollback()
+            await db.rollback()
             sqlstate = _extract_sqlstate(exc)
-            should_retry = (
-                sqlstate in RETRYABLE_SQLSTATES
-                and attempt <= DB_TX_MAX_RETRIES
-            )
+            should_retry = sqlstate in RETRYABLE_SQLSTATES and attempt <= DB_TX_MAX_RETRIES
             if should_retry:
                 backoff = DB_TX_RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 jitter = random.uniform(0, DB_TX_RETRY_BASE_DELAY) if DB_TX_RETRY_BASE_DELAY > 0 else 0
@@ -53,7 +50,7 @@ def _run_tx_with_retry(db: Session, operation_name: str, operation: Callable[[],
                     sqlstate,
                     sleep_for,
                 )
-                time.sleep(sleep_for)
+                await asyncio.sleep(sleep_for)
                 continue
 
             logger.exception(
@@ -65,81 +62,82 @@ def _run_tx_with_retry(db: Session, operation_name: str, operation: Callable[[],
             raise HTTPException(status_code=500, detail="Transaction failed")
 
 
-def create_user(db: Session, email: str, hashed_password: str | None = None):
+async def create_user(db: AsyncSession, email: str, hashed_password: str | None = None):
     try:
-        existing = db.query(User).filter(User.email == email).first()
+        existing = await db.scalar(select(User).where(User.email == email))
         if existing:
             raise HTTPException(status_code=400, detail="User already exists")
 
         user = User(email=email, hashed_password=hashed_password)
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         logger.info("User created | user_id=%s email=%s", user.id, user.email)
         return user
     except HTTPException:
-        db.rollback()
+        await db.rollback()
         raise
     except IntegrityError:
-        db.rollback()
+        await db.rollback()
         logger.warning("Duplicate user create attempt | email=%s", email)
         raise HTTPException(status_code=400, detail="User already exists")
     except SQLAlchemyError:
-        db.rollback()
+        await db.rollback()
         logger.exception("Database error in create_user | email=%s", email)
         raise HTTPException(status_code=500, detail="Database error")
 
 
-def create_wallet(db: Session, user_id: UUID):
+async def create_wallet(db: AsyncSession, user_id: UUID):
     try:
-        user = db.query(User).filter(User.id == user_id).first()
+        user = await db.scalar(select(User).where(User.id == user_id))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
-        existing = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        existing = await db.scalar(select(Wallet).where(Wallet.user_id == user_id))
         if existing:
             raise HTTPException(status_code=400, detail="Wallet already exists")
 
         wallet = Wallet(user_id=user_id, balance=Decimal("0.00"))
         db.add(wallet)
-        db.commit()
-        db.refresh(wallet)
+        await db.commit()
+        await db.refresh(wallet)
         logger.info("Wallet created | user_id=%s wallet_id=%s", user_id, wallet.id)
         return wallet
     except HTTPException:
-        db.rollback()
+        await db.rollback()
         raise
     except IntegrityError:
-        db.rollback()
+        await db.rollback()
         logger.warning("Duplicate wallet create attempt | user_id=%s", user_id)
         raise HTTPException(status_code=400, detail="Wallet already exists")
     except SQLAlchemyError:
-        db.rollback()
+        await db.rollback()
         logger.exception("Database error in create_wallet | user_id=%s", user_id)
         raise HTTPException(status_code=500, detail="Database error")
 
 
-def credit_wallet(db: Session, user_id: UUID, amount: Decimal):
+async def credit_wallet(db: AsyncSession, user_id: UUID, amount: Decimal):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    def _operation():
-        update_result = db.execute(
-            update(Wallet)
-            .where(Wallet.user_id == user_id)
-            .values(balance=Wallet.balance + amount)
-            .returning(Wallet.id)
+    async def _operation():
+        update_result = (
+            await db.execute(
+                update(Wallet)
+                .where(Wallet.user_id == user_id)
+                .values(balance=Wallet.balance + amount)
+                .returning(Wallet.id)
+            )
         ).first()
         if not update_result:
             raise HTTPException(status_code=404, detail="Wallet not found")
 
         wallet_id = update_result[0]
-        entry = Ledger(wallet_id=wallet_id, type="credit", amount=amount)
-        db.add(entry)
+        db.add(Ledger(wallet_id=wallet_id, type="credit", amount=amount))
 
-        db.commit()
-        wallet = db.query(Wallet).filter(Wallet.id == wallet_id).first()
-        db.refresh(wallet)
+        await db.commit()
+        wallet = await db.scalar(select(Wallet).where(Wallet.id == wallet_id))
+        await db.refresh(wallet)
         logger.info(
             "Wallet credited | user_id=%s wallet_id=%s amount=%s new_balance=%s",
             user_id,
@@ -149,35 +147,35 @@ def credit_wallet(db: Session, user_id: UUID, amount: Decimal):
         )
         return wallet
 
-    return _run_tx_with_retry(db, "credit_wallet", _operation)
+    return await _run_tx_with_retry(db, "credit_wallet", _operation)
 
 
-def debit_wallet(db: Session, user_id: UUID, amount: Decimal):
+async def debit_wallet(db: AsyncSession, user_id: UUID, amount: Decimal):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Invalid amount")
 
-    def _operation():
-        # Single atomic update prevents race conditions across concurrent workers/instances.
-        update_result = db.execute(
-            update(Wallet)
-            .where(Wallet.user_id == user_id, Wallet.balance >= amount)
-            .values(balance=Wallet.balance - amount)
-            .returning(Wallet.id)
+    async def _operation():
+        update_result = (
+            await db.execute(
+                update(Wallet)
+                .where(Wallet.user_id == user_id, Wallet.balance >= amount)
+                .values(balance=Wallet.balance - amount)
+                .returning(Wallet.id)
+            )
         ).first()
 
         if not update_result:
-            wallet_exists = db.query(Wallet.id).filter(Wallet.user_id == user_id).first()
+            wallet_exists = await db.scalar(select(Wallet.id).where(Wallet.user_id == user_id))
             if not wallet_exists:
                 raise HTTPException(status_code=404, detail="Wallet not found")
             raise HTTPException(status_code=400, detail="Insufficient balance")
 
         wallet_id = update_result[0]
-        entry = Ledger(wallet_id=wallet_id, type="debit", amount=amount)
-        db.add(entry)
+        db.add(Ledger(wallet_id=wallet_id, type="debit", amount=amount))
 
-        db.commit()
-        wallet = db.query(Wallet).filter(Wallet.id == wallet_id).first()
-        db.refresh(wallet)
+        await db.commit()
+        wallet = await db.scalar(select(Wallet).where(Wallet.id == wallet_id))
+        await db.refresh(wallet)
         logger.info(
             "Wallet debited | user_id=%s wallet_id=%s amount=%s new_balance=%s",
             user_id,
@@ -187,12 +185,12 @@ def debit_wallet(db: Session, user_id: UUID, amount: Decimal):
         )
         return wallet
 
-    return _run_tx_with_retry(db, "debit_wallet", _operation)
+    return await _run_tx_with_retry(db, "debit_wallet", _operation)
 
 
-def get_balance(db: Session, user_id: UUID):
+async def get_balance(db: AsyncSession, user_id: UUID):
     try:
-        wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        wallet = await db.scalar(select(Wallet).where(Wallet.user_id == user_id))
         if not wallet:
             raise HTTPException(status_code=404, detail="Wallet not found")
         return wallet
@@ -203,18 +201,18 @@ def get_balance(db: Session, user_id: UUID):
         raise HTTPException(status_code=500, detail="Database error")
 
 
-def get_ledger(db: Session, user_id: UUID):
+async def get_ledger(db: AsyncSession, user_id: UUID):
     try:
-        wallet = db.query(Wallet).filter(Wallet.user_id == user_id).first()
+        wallet = await db.scalar(select(Wallet).where(Wallet.user_id == user_id))
         if not wallet:
             raise HTTPException(status_code=404, detail="Wallet not found")
 
-        return (
-            db.query(Ledger)
-            .filter(Ledger.wallet_id == wallet.id)
+        result = await db.execute(
+            select(Ledger)
+            .where(Ledger.wallet_id == wallet.id)
             .order_by(Ledger.created_at.desc())
-            .all()
         )
+        return result.scalars().all()
     except HTTPException:
         raise
     except SQLAlchemyError:

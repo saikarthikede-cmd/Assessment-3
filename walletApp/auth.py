@@ -5,14 +5,13 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from walletApp.config import JWT_ACCESS_TOKEN_EXPIRE_MINUTES, JWT_ALGORITHM, JWT_SECRET_KEY
 from walletApp.database import get_db
-from walletApp.logging_config import get_logger
 from walletApp.models import User
 
-logger = get_logger(__name__)
 auth_scheme = HTTPBearer(auto_error=False)
 password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -48,9 +47,9 @@ def _decode_access_token(token: str) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(auth_scheme),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     if credentials is None or not credentials.credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -67,28 +66,8 @@ def get_current_user(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject") from exc
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = await db.scalar(select(User).where(User.id == user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     return user
-
-
-def authorize_user_access(path_user_id: UUID, current_user_id: UUID) -> None:
-    if path_user_id != current_user_id:
-        logger.warning(
-            "Forbidden wallet access attempt | token_user_id=%s target_user_id=%s",
-            current_user_id,
-            path_user_id,
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-
-
-def authorize_user_access_by_email(path_email: str, current_user_email: str) -> None:
-    if path_email.strip().lower() != current_user_email.strip().lower():
-        logger.warning(
-            "Forbidden wallet access attempt | token_email=%s target_email=%s",
-            current_user_email,
-            path_email,
-        )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
