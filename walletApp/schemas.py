@@ -38,6 +38,7 @@ class WalletResponse(BaseModel):
     id: UUID
     user_id: UUID
     balance: Decimal
+    version: int
     created_at: datetime
 
     class Config:

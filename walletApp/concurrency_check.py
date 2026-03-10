@@ -1,4 +1,4 @@
-import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from uuid import uuid4
 
@@ -8,27 +8,29 @@ from walletApp import crud
 from walletApp.database import SessionLocal, ensure_schema_compatibility
 
 
-async def _debit_once(user_id):
-    async with SessionLocal() as db:
+def _debit_once(user_id):
+    with SessionLocal() as db:
         try:
-            await crud.debit_wallet(db, user_id, Decimal("10.00"))
+            crud.debit_wallet(db, user_id, Decimal("10.00"))
             return True, "ok"
         except HTTPException as exc:
             return False, str(exc.detail)
 
 
-async def run_check(concurrency: int = 50) -> None:
-    await ensure_schema_compatibility()
+def run_check(concurrency: int = 50) -> None:
+    ensure_schema_compatibility()
 
-    async with SessionLocal() as setup_db:
+    with SessionLocal() as setup_db:
         email = f"phase2_{uuid4()}@example.com"
         password_hash = "phase2-check-only"
-        user = await crud.create_user(setup_db, email, password_hash)
+        user = crud.create_user(setup_db, email, password_hash)
         user_id = user.id
-        await crud.create_wallet(setup_db, user_id)
-        await crud.credit_wallet(setup_db, user_id, Decimal("100.00"))
+        crud.create_wallet(setup_db, user_id)
+        crud.credit_wallet(setup_db, user_id, Decimal("100.00"))
 
-    results = await asyncio.gather(*[_debit_once(user_id) for _ in range(concurrency)])
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = [executor.submit(_debit_once, user_id) for _ in range(concurrency)]
+        results = [future.result() for future in futures]
 
     successes = 0
     failures = 0
@@ -40,9 +42,9 @@ async def run_check(concurrency: int = 50) -> None:
             failures += 1
             failure_reasons[detail] = failure_reasons.get(detail, 0) + 1
 
-    async with SessionLocal() as verify_db:
-        wallet = await crud.get_balance(verify_db, user_id)
-        ledger_entries = await crud.get_ledger(verify_db, user_id)
+    with SessionLocal() as verify_db:
+        wallet = crud.get_balance(verify_db, user_id)
+        ledger_entries = crud.get_ledger(verify_db, user_id)
 
     debit_entries = [
         entry for entry in ledger_entries if entry.type == "debit" and entry.amount == Decimal("10.00")
@@ -66,4 +68,4 @@ async def run_check(concurrency: int = 50) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_check(concurrency=50))
+    run_check(concurrency=50)

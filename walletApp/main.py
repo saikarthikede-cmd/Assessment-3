@@ -1,9 +1,8 @@
-import time
 from typing import List
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from walletApp import auth, crud, schemas
 from walletApp.database import ensure_schema_compatibility, get_db
@@ -19,34 +18,19 @@ register_exception_handlers(app)
 
 
 @app.on_event("startup")
-async def startup_event() -> None:
-    await ensure_schema_compatibility()
-
-
-@app.middleware("http")
-async def request_logging_middleware(request: Request, call_next):
-    start = time.perf_counter()
-    response = await call_next(request)
-    duration_ms = (time.perf_counter() - start) * 1000
-    logger.info(
-        "Request served | method=%s path=%s status=%s duration_ms=%.2f",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-    )
-    return response
+def startup_event() -> None:
+    ensure_schema_compatibility()
 
 
 @app.post("/auth/register", response_model=schemas.UserResponse, tags=["Auth"])
-async def register(payload: schemas.RegisterRequest, db: AsyncSession = Depends(get_db)):
+def register(payload: schemas.RegisterRequest, db: Session = Depends(get_db)):
     hashed_password = auth.hash_password(payload.password)
-    return await crud.create_user(db, payload.email, hashed_password)
+    return crud.create_user(db, payload.email, hashed_password)
 
 
 @app.post("/auth/signin", response_model=schemas.TokenResponse, tags=["Auth"])
-async def signin(payload: schemas.AuthTokenRequest, db: AsyncSession = Depends(get_db)):
-    user = await db.scalar(select(User).where(User.email == payload.email))
+def signin(payload: schemas.AuthTokenRequest, db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.email == payload.email))
     if not user or not user.hashed_password:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not auth.verify_password(payload.password, user.hashed_password):
@@ -57,42 +41,42 @@ async def signin(payload: schemas.AuthTokenRequest, db: AsyncSession = Depends(g
 
 
 @app.post("/wallets", response_model=schemas.WalletResponse, tags=["Wallet"])
-async def create_wallet(
+def create_wallet(
     current_user: User = Depends(auth.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
-    return await crud.create_wallet(db, current_user.id)
+    return crud.create_wallet(db, current_user.id)
 
 
 @app.post("/wallets/credit", response_model=schemas.WalletResponse, tags=["Wallet"])
-async def credit(
+def credit(
     request: schemas.TransactionCreate,
     current_user: User = Depends(auth.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
-    return await crud.credit_wallet(db, current_user.id, request.amount)
+    return crud.credit_wallet(db, current_user.id, request.amount)
 
 
 @app.post("/wallets/debit", response_model=schemas.WalletResponse, tags=["Wallet"])
-async def debit(
+def debit(
     request: schemas.TransactionCreate,
     current_user: User = Depends(auth.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
-    return await crud.debit_wallet(db, current_user.id, request.amount)
+    return crud.debit_wallet(db, current_user.id, request.amount)
 
 
 @app.get("/wallets/balance", response_model=schemas.WalletResponse, tags=["Wallet"])
-async def balance(
+def balance(
     current_user: User = Depends(auth.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
-    return await crud.get_balance(db, current_user.id)
+    return crud.get_balance(db, current_user.id)
 
 
 @app.get("/wallets/ledger", response_model=List[schemas.LedgerResponse], tags=["Wallet"])
-async def ledger(
+def ledger(
     current_user: User = Depends(auth.get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: Session = Depends(get_db),
 ):
-    return await crud.get_ledger(db, current_user.id)
+    return crud.get_ledger(db, current_user.id)
